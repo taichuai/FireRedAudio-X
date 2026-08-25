@@ -9,9 +9,9 @@
     <p>
     </p>
     <a href="#"><img src="https://img.shields.io/badge/Paper-ArXiv-red" alt="technical report"></a>
-    <a href="https://fireredteam.github.io/demos/fireredaudio/"><img src="https://img.shields.io/badge/Demo-Page-lightgrey" alt="version"></a>
+    <a href="https://fireredteam.github.io/demos/fireredaudio/"><img src="https://img.shields.io/badge/Demo-Page-9B6A6A&logoColor=white&labelColor=664646" alt="FireRedAudio Demo Page"></a>
     <a href="https://huggingface.co/FireRedTeam/FireRedAudio"><img src="https://img.shields.io/badge/Hugging%20Face-Model%20Page-yellow" alt="HF-model"></a>
-    <a href="https://www.modelscope.cn/models/FireRedTeam/FireRedAudio"><img src="https://img.shields.io/badge/ModelScope-Model%20Page-624AFF?logo=modelscope&logoColor=white" alt="ModelScope-model"></a>
+    <a href="https://www.modelscope.cn/models/FireRedTeam/FireRedAudio"><img src="https://img.shields.io/badge/ModelScope-Model%20Page-624AFF&logoColor=white" alt="ModelScope-model"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0"></a>
 </div>
 
@@ -34,6 +34,22 @@
 * 📊 **One model, a full audio stack** — FireRedAudio spans ASR, broad and fine-grained audio understanding, zero-shot TTS, Instruct TTS, and free-form speech editing, achieving competitive or leading results across MMAU, MMSU, Seed-TTS-Eval, InstructTTSEval, and Ming-Freeform-Audio-Edit.
 * 🎙️ **Create and edit speech with natural language** — Clone a voice from a reference clip, design a voice from a description, or edit what was said and how it sounds through one continuous-latent generation pathway.
 * ⏱️ **Go from minutes to hour-long recordings** — Understand recordings up to one hour with precise time-to-content alignment. Organize audio into timestamped structures, produce grounded summaries, retrieve content by time (or time by content), and reason over evidence distributed across the recording.
+
+
+## Long-Audio Understanding: Time–Content Alignment Demo
+
+<table>
+  <tbody>
+    <tr>
+      <td width="50%">
+        <video src="https://github.com/user-attachments/assets/acd36345-71e5-4c46-b828-6d4577bc24bd" controls width="100%"></video>
+      </td>
+      <td width="50%">
+        <video src="https://github.com/user-attachments/assets/b592e6ce-d9c5-4742-86ec-488c8f496ccc" controls width="100%"></video>
+      </td>
+    </tr>
+  </tbody>
+</table>
 
 
 ## News
