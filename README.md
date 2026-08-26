@@ -8,7 +8,7 @@
     </p>
     <p>
     </p>
-    <a href="#"><img src="https://img.shields.io/badge/Paper-ArXiv-red" alt="technical report"></a>
+    <a href="https://arxiv.org/abs/2608.24168"><img src="https://img.shields.io/badge/Paper-ArXiv-red" alt="technical report"></a>
     <a href="https://fireredteam.github.io/demos/fireredaudio/"><img src="https://img.shields.io/badge/Demo-Page-9B6A6A&logoColor=white&labelColor=664646" alt="FireRedAudio Demo Page"></a>
     <a href="https://huggingface.co/FireRedTeam/FireRedAudio"><img src="https://img.shields.io/badge/Hugging%20Face-Model%20Page-yellow" alt="HF-model"></a>
     <a href="https://www.modelscope.cn/models/FireRedTeam/FireRedAudio"><img src="https://img.shields.io/badge/ModelScope-Model%20Page-624AFF&logoColor=white" alt="ModelScope-model"></a>
