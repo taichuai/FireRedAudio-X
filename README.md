@@ -200,6 +200,29 @@ uv run inference.py --task voice_design --model pretrained_models/FireRedAudio -
 ```
 
 
+### Web Demo (Gradio)
+
+A single-file Gradio app at [`app.py`](app.py) wraps all four tasks
+(zero-shot TTS · instruct TTS · speech editing · listen & understand) with the
+same weights and prompt templates as the CLI. Gradio is the only extra dep on
+top of the base install:
+
+```sh
+uv pip install gradio
+
+uv run app.py \
+    --model_path       pretrained_models/FireRedAudio \
+    --vae_decoder_path pretrained_models/RedAE_decoder/model.pt \
+    --host 0.0.0.0 --port 7860
+```
+
+Defaults to `http://0.0.0.0:7860`. The understanding tab exposes the full Qwen3
+sampling controls (`temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
+`do_sample`) with a think-preset toggle that swaps in Qwen3's recommended
+`(temperature, top_p)` for reasoning / non-reasoning modes. If you're serving
+behind a reverse proxy, add `--root-path <prefix>`.
+
+
 ## Performance
 
 ### Audio Understanding
