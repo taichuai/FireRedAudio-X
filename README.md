@@ -54,6 +54,7 @@
 
 ## News
 
+- [2026.09.08] We release a **[Gradio web demo](#web-demo-gradio)** for zero-shot TTS, instruct TTS, speech editing, ASR, and audio understanding.
 - [2026.08.21] We release the **FireRedAudio** code and model.
 
 
@@ -201,6 +202,10 @@ uv run inference.py --task voice_design --model pretrained_models/FireRedAudio -
 
 
 ### Web Demo (Gradio)
+
+<div align="center">
+  <img src="assets/snapshot_gradio.png" alt="FireRedAudio Gradio Web Demo" width="90%">
+</div>
 
 A single-file Gradio app at [`app.py`](app.py) wraps all four tasks
 (zero-shot TTS · instruct TTS · speech editing · listen & understand) with the
