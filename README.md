@@ -6,9 +6,9 @@
 
 - **加速推理**：vLLM / SGLang 后端，支持 ASR、音频理解、thinking、多音频及 JSONL 批量请求。
 - **单设备 SFT**：ASR / 理解分支和连续 latent TTS，支持验证、断点恢复与完整模型导出。
-- **辅助工具**：批量语音生成、副语言评估脚本和推理回归测试。
+- **辅助工具**：批量语音生成、带副语言标签的联合转写和推理回归测试。
 
-训练用法与支持范围见 [训练说明](TRAINING_REPRODUCTION.md)。副语言评估仍为实验性工具，失败样本统计待完善。
+训练用法与支持范围见 [训练说明](TRAINING_REPRODUCTION.md)。
 
 ## 安装
 
@@ -47,7 +47,7 @@ uv pip install --python .venv-sglang/bin/python --torch-backend cu128 -r require
 | TTS 训练 | [train_fireredaudio_tts.py](scripts/train_fireredaudio_tts.py) |
 | 合并导出训练权重 | [export_fireredaudio_checkpoint.py](scripts/export_fireredaudio_checkpoint.py) |
 | 批量语音生成 | [run_instruct_tts_demo.py](scripts/run_instruct_tts_demo.py) |
-| 副语言评估（实验性） | [eval_paralanguage.py](scripts/eval_paralanguage.py) |
+| 带副语言标签的联合转写 | [run_paralanguage_joint_transcription.py](scripts/run_paralanguage_joint_transcription.py) |
 
 各脚本参数可通过 `--help` 查看。以下命令在仓库根目录执行，GPU 编号按实际设备调整。
 
@@ -74,6 +74,31 @@ CUDA_VISIBLE_DEVICES=0 uv run python inference.py \
   --prompt 'Describe the audio in detail.' \
   --enable-thinking --max-new-tokens 2048
 ```
+
+### 带副语言标签的联合转写
+
+生成逐字转写，并在文本中插入听到的呼吸、叹气、笑声等标签：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run python scripts/run_paralanguage_joint_transcription.py \
+  --audio assets/examples/asr_zh_fleurs.wav --output-dir results/joint
+```
+
+批量输入使用 JSON 数组或 JSONL，每条包含 `id` 和 `path`（也可用 `audio`）：
+
+```jsonl
+{"id":"sample-1","path":"audio/example.wav"}
+```
+
+```bash
+uv run python scripts/run_paralanguage_joint_transcription.py \
+  --manifest inputs.jsonl --output-dir results/joint-batch
+```
+
+音频路径默认相对清单目录，可用 `--data-root` 覆盖。`--prompt-file` 可自定义提示词。
+结果逐条写入 `joint_transcriptions.jsonl`，包含原始回答、单行转写、原始标签及错误信息。
+标签保留模型原样，不进行类别归一化或指标计算；已有输出不会被覆盖。
+单条失败不阻止后续处理，存在失败时退出码为 1。长音频可调大 `--max-new-tokens`，需检查输出是否完整。
 
 ### TTS
 

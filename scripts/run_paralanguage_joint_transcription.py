@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run tagged verbatim transcription on an existing paralanguage sample manifest."""
+"""Transcribe audio with inline paralinguistic tags, without evaluation dependencies."""
 
 from __future__ import annotations
 
@@ -12,159 +12,112 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from inference import FireRedAudioInference, set_seed
-from scripts.eval_paralanguage import (
-    PROMPT_LABELS,
-    evaluate,
-    export_review_assets,
-    extract_output_labels,
-    normalize_prediction_text,
-    parse_prediction,
-)
-
-
 PROMPT = """请逐字转写这段中文音频，并把听到的副语言事件插入到它在语句中实际发生的位置。
-副语言事件只能使用以下完整标签：{labels}
+副语言事件只能使用以下完整标签：<呼吸声>、<叹气声>、<疑问声-欸？>、<咳嗽声>、<疑问声-咦？>、<哭声>、<大笑>、<犹豫声-嗯。。。>、<惊讶声-啊！>、<应答声-嗯>、<惊讶声-哦！>、<疑问声-啊？>、<惊讶声-哇！>、<不满声-哼？>、<疑问声-嗯？>、<疑问声-哦？>、<惊讶声-哟！>、<清嗓声>
 要求：
 1. 保留音频中的全部语音内容，不要只输出标签。
 2. 标签必须使用尖括号，并插入事件实际发生的位置。
 3. 没有副语言事件时，只输出普通逐字转写。
 4. 不要创造候选列表之外的标签，不要解释，不要输出 Markdown。
-5. 只输出一行带标签的完整转写。""".format(labels="、".join(PROMPT_LABELS))
+5. 只输出一行带标签的完整转写。"""
 
 
 def normalize_one_line(text: str) -> str:
-    """Collapse model-generated layout whitespace without changing its words/tags."""
     return re.sub(r"\s+", " ", text).strip()
 
 
+def load_manifest(path: Path) -> list[dict]:
+    content = path.read_text(encoding="utf-8")
+    if content.lstrip().startswith("["):
+        records = json.loads(content)
+    else:
+        records = [json.loads(line) for line in content.splitlines() if line.strip()]
+    if not isinstance(records, list) or not records:
+        raise ValueError("Manifest must contain a nonempty JSON array or JSONL records")
+    ids = set()
+    result = []
+    for index, record in enumerate(records, 1):
+        if not isinstance(record, dict):
+            raise ValueError(f"Record {index} must be an object")
+        audio = record.get("path", record.get("audio"))
+        sample_id = record.get("id", index)
+        if not isinstance(audio, str) or not audio.strip():
+            raise ValueError(f"Record {index} requires a nonempty path or audio string")
+        if type(sample_id) not in (str, int) or str(sample_id) in ids:
+            raise ValueError(f"Record {index} has an invalid or duplicate id")
+        ids.add(str(sample_id))
+        result.append({"id": sample_id, "path": audio})
+    return result
+
+
+def transcribe(engine, record: dict, base: Path, prompt: str, max_new_tokens: int) -> dict:
+    path = Path(record["path"])
+    audio_path = path if path.is_absolute() else base / path
+    result = {"id": record["id"], "source_audio": record["path"],
+              "joint_transcription": "", "joint_transcription_raw": "",
+              "raw_angle_tags": [], "error": None}
+    try:
+        if not audio_path.is_file():
+            raise FileNotFoundError("Audio file does not exist")
+        raw = engine.understand(str(audio_path), prompt, task="understand",
+                                max_new_tokens=max_new_tokens).answer
+        if not raw.strip():
+            raise ValueError("Model returned an empty transcription")
+        result.update(joint_transcription=normalize_one_line(raw),
+                      joint_transcription_raw=raw,
+                      raw_angle_tags=re.findall(r"<[^>\n]+>", raw))
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, default=Path("demo_outputs/paralanguage/manifest.json"))
-    parser.add_argument("--classification-results", type=Path, default=Path("demo_outputs/paralanguage/predictions.jsonl"))
+    parser = argparse.ArgumentParser(description=__doc__)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--audio", type=Path, help="single audio, relative to the current directory")
+    inputs.add_argument("--manifest", type=Path, help="JSON array or JSONL containing id and path/audio")
+    parser.add_argument("--data-root", type=Path, help="manifest audio root; defaults to the manifest directory")
     parser.add_argument("--model", default="pretrained_models/FireRedAudio")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--output-dir", type=Path, default=Path("demo_outputs/paralanguage"))
-    parser.add_argument("--seed", type=int, default=20260908)
-    parser.add_argument("--max-new-tokens", type=int, default=384)
-    parser.add_argument(
-        "--prompt-file",
-        type=Path,
-        default=None,
-        help="optional UTF-8 prompt file; defaults to the closed-label prompt",
-    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    parser.add_argument("--prompt-file", type=Path, help="optional UTF-8 prompt overriding the default tags")
     args = parser.parse_args()
-
-    prompt = (
-        args.prompt_file.read_text(encoding="utf-8").strip()
-        if args.prompt_file is not None
-        else PROMPT
-    )
+    if args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive")
+    if args.audio and args.data_root:
+        parser.error("--data-root applies only to --manifest")
+    prompt = args.prompt_file.read_text(encoding="utf-8").strip() if args.prompt_file else PROMPT
     if not prompt:
-        raise ValueError("prompt must not be empty")
+        parser.error("prompt must not be empty")
+    if args.manifest:
+        records = load_manifest(args.manifest)
+        base = args.data_root or args.manifest.resolve().parent
+    else:
+        records = [{"id": args.audio.stem, "path": str(args.audio)}]
+        base = Path.cwd()
+    output_path = args.output_dir / "joint_transcriptions.jsonl"
+    if output_path.exists():
+        parser.error(f"Output already exists: {output_path}; choose a new --output-dir")
 
-    selected = json.loads(args.manifest.read_text(encoding="utf-8"))
-    classification_rows = [
-        json.loads(line)
-        for line in args.classification_results.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    classification_by_id = {row["id"]: row for row in classification_rows}
-    if {row["id"] for row in selected} != set(classification_by_id):
-        raise ValueError("manifest and classification result IDs do not match")
+    from inference import FireRedAudioInference, set_seed
 
     engine = FireRedAudioInference(model_path=args.model, device=args.device)
-    results = []
-    for index, record in enumerate(selected, 1):
-        sample_id = record["id"]
-        audio_path = args.data_root / record["path"]
-        set_seed(args.seed + index)
-        print(f"[{index:02d}/{len(selected)}] id={sample_id}", flush=True)
-        try:
-            raw_response = engine.understand(
-                str(audio_path),
-                prompt,
-                task="understand",
-                max_new_tokens=args.max_new_tokens,
-            ).answer.strip()
-            response = normalize_one_line(raw_response)
-            output_labels = extract_output_labels(raw_response)
-            predicted_labels = parse_prediction(raw_response)
-            error = None
-        except Exception as exc:
-            raw_response = ""
-            response = ""
-            output_labels = []
-            predicted_labels = []
-            error = f"{type(exc).__name__}: {exc}"
-        gold_labels = sorted({item["text"] for item in record.get("timestamps", [])})
-        result = {
-            "id": sample_id,
-            "source_audio": record["path"],
-            "copied_audio": (Path("audio") / f"{sample_id}.wav").as_posix(),
-            "gold_transcription": record.get("text", ""),
-            "gold_labels": gold_labels,
-            "classification_labels": classification_by_id[sample_id]["predicted_labels"],
-            "joint_transcription": response,
-            "joint_transcription_raw": raw_response,
-            "raw_angle_tags": re.findall(r"<[^>\n]+>", raw_response),
-            "normalized_transcription": normalize_prediction_text(response),
-            "joint_output_labels": output_labels,
-            "joint_predicted_labels": predicted_labels,
-            "joint_label_exact_match": set(gold_labels) == set(predicted_labels),
-            "error": error,
-        }
-        results.append(result)
-        classification_by_id[sample_id].update(
-            {
-                "joint_transcript": response,
-                "joint_transcript_raw": raw_response,
-                "joint_predicted_labels": predicted_labels,
-                "joint_error": error,
-            }
-        )
-        print(f"    {response}", flush=True)
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    (args.output_dir / "prompt.txt").write_text(prompt + "\n", encoding="utf-8")
-    (args.output_dir / "joint_transcriptions.json").write_text(
-        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    (args.output_dir / "joint_transcriptions.jsonl").write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in results) + "\n",
-        encoding="utf-8",
-    )
-    (args.output_dir / "joint_transcriptions.txt").write_text(
-        "\n\n".join(
-            f"ID: {row['id']}\n人工: {row['gold_transcription']}\n模型: {row['joint_transcription']}"
-            for row in results
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    metrics = evaluate(
-        [
-            {
-                "gold_labels": row["gold_labels"],
-                "predicted_labels": row["joint_predicted_labels"],
-            }
-            for row in results
-        ]
-    )
-    (args.output_dir / "joint_metrics.json").write_text(
-        json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    enriched_rows = [classification_by_id[record["id"]] for record in selected]
-    args.classification_results.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in enriched_rows) + "\n",
-        encoding="utf-8",
-    )
-    export_review_assets(args.data_root, selected, enriched_rows, args.output_dir)
-    print(
-        f"wrote {len(results)} results to {args.output_dir / 'joint_transcriptions.json'}",
-        flush=True,
-    )
+    failures = 0
+    with output_path.open("x", encoding="utf-8") as stream:
+        for index, record in enumerate(records, 1):
+            set_seed(args.seed + index)
+            result = transcribe(engine, record, base, prompt, args.max_new_tokens)
+            stream.write(json.dumps(result, ensure_ascii=False) + "\n")
+            stream.flush()
+            failures += result["error"] is not None
+            print(f"[{index}/{len(records)}] {record['id']}: "
+                  f"{result['error'] or result['joint_transcription']}", flush=True)
+    print(f"Wrote {len(records)} records ({failures} failed) to {output_path}", flush=True)
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
