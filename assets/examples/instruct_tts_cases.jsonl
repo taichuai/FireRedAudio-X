@@ -1,0 +1,9 @@
+{"id":"zh_aps_female_bright","task":"voice_design","language":"zh","instruction":"年轻女性的清亮高音，音量略强，语速稍快，语气活泼而自信，像在分享一个令人兴奋的好消息。","text":"今天的实验结果超出了我们的预期，接下来还有更多惊喜。"}
+{"id":"zh_dsd_gentle_reassuring","task":"voice_design","language":"zh","instruction":"声音温柔、平静、亲切，语速偏慢，带有安慰和耐心倾听的感觉，像在深夜陪朋友聊天。","text":"别担心，我们一步一步来，事情一定会慢慢好起来的。"}
+{"id":"zh_rp_news_anchor","task":"voice_design","language":"zh","instruction":"专业新闻播音员，发音清晰标准，语速适中，音色稳重，情绪克制但具有现场感。","text":"下面播报一条最新消息，城市公共交通将在明天进行全面调整。"}
+{"id":"zh_rp_sports_commentator","task":"voice_design","language":"zh","instruction":"充满激情的体育解说员，音量较强，语速很快，情绪高昂，关键时刻表现出惊喜和兴奋。","text":"最后十秒，球员突破防守，起脚射门，比赛在这一刻彻底改变。"}
+{"id":"en_aps_male_authoritative","task":"voice_design","language":"en","instruction":"A mature male voice with a low pitch, moderate volume, and slightly slow pace. Sound calm, authoritative, and precise.","text":"The next step is simple: review the evidence, check the assumptions, and make a careful decision."}
+{"id":"en_dsd_warm_customer_service","task":"voice_design","language":"en","instruction":"Use a warm, friendly, patient customer-service voice. Sound helpful and reassuring, with a natural conversational pace and a gentle smile.","text":"I understand the problem, and I will stay with you until we find a solution."}
+{"id":"baseline_zero_shot_zh","task":"tts","language":"zh","prompt_audio":"tts_zh_prompt.wav","prompt_text":"同时，他强调微调要科学有序。","target_text":"这是一个没有额外音色指令的零样本语音生成对照。"}
+{"id":"edit_pitch_up","task":"edit","edit_type":"acoustic","audio":"edit_acoustic_zh_ref.wav","instruction":"shift the pitch by 3 steps"}
+{"id":"edit_semantic_delete","task":"edit","edit_type":"semantic","audio":"edit_semantic_zh_ref.wav","instruction":"delete '比普通的茶叶要'"}

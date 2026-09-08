@@ -1,0 +1,2 @@
+# Separate Python 3.12 environment; SGLang pins its own Torch/Transformers.
+sglang==0.5.9

@@ -81,6 +81,7 @@ class RedPatchEncoderConfig(PretrainedConfig):
 
 class RedPatchEncoder(PreTrainedModel):
     config_class = RedPatchEncoderConfig
+    main_input_name = "inputs_embeds_vae"
     base_model_prefix = "red_patch_encoder"
     _supports_flash_attn = True
     _supports_sdpa = True

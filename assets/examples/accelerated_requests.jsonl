@@ -1,0 +1,4 @@
+{"id":"asr-1","task":"asr","audio":"assets/examples/asr_zh_fleurs.wav"}
+{"id":"qa-1","task":"understand","audio":"assets/examples/assets_mmau_test.wav","prompt":"Describe the audio in detail.","enable_thinking":true}
+{"id":"multi-1","task":"understand","audio":["assets/examples/asr_zh_fleurs.wav","assets/examples/tts_zh_prompt.wav"],"prompt":"Transcribe Audio 1 and Audio 2 separately."}
+{"id":"asr-repeat","task":"asr","audio":"assets/examples/asr_zh_fleurs.wav"}

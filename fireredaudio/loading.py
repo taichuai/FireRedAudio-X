@@ -20,6 +20,8 @@ def load_fireredaudio(
     model_name_or_path: str,
     dtype: torch.dtype = torch.bfloat16,
     device: str | torch.device | None = None,
+    attention: str | None = None,
+    use_liger: bool = True,
 ) -> FireRedAudioForCausalLM:
     """Load the model for inference.
 
@@ -27,19 +29,24 @@ def load_fireredaudio(
         model_name_or_path: Directory holding config.json and safetensors shards.
         dtype: Weight dtype; bfloat16 matches the released weights.
         device: Moved there when given.
+        attention: Optional explicit attention backend; defaults to auto selection.
+        use_liger: Apply the optional inference kernels. SFT disables this patch.
 
     Returns:
         A FireRedAudioForCausalLM in eval mode.
     """
     config = FireRedAudioConfig.from_pretrained(model_name_or_path)
-    attn = _resolve_attn()
+    attn = attention or _resolve_attn()
+    if attn not in {"eager", "sdpa", "flash_attention_2"}:
+        raise ValueError(f"Unsupported attention implementation: {attn}")
 
     # dit, patch_encoder and vae/downsample hardcode their attention and ignore this.
     config.backbone_config._attn_implementation = attn
     config.audio_encoder_config._attn_implementation = attn
     config.red_vae_config._attn_implementation = attn
 
-    _apply_liger()
+    if use_liger:
+        _apply_liger()
 
     model = FireRedAudioForCausalLM.from_pretrained(
         model_name_or_path, config=config, torch_dtype=dtype

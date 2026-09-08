@@ -1,6 +1,8 @@
 import warnings
 
 import torch
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import GenerationConfig, PreTrainedModel
 from transformers.generation.logits_process import LogitsProcessorList
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForCausalLM
@@ -12,6 +14,7 @@ from .audio_encoder.modeling_audio_encoder import FireRedAudioEncoder
 from .redae.encoder import RedAEAudioEncoderV1
 from .flow.estimator import RedDiT
 from .flow.patch_encoder import RedPatchEncoder
+from .training.losses import weighted_text_loss
 
 
 class FireRedAudioForCausalLM(PreTrainedModel):
@@ -84,6 +87,185 @@ class FireRedAudioForCausalLM(PreTrainedModel):
             )
 
         return audio_outputs
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor,
+        audio_features: torch.Tensor | None = None,
+        audio_feature_attention_mask: torch.Tensor | None = None,
+        vae_audios: torch.Tensor | None = None,
+        patch_encoder_output_attention_mask: torch.Tensor | None = None,
+        generation_target_start_patches: torch.Tensor | None = None,
+        labels: torch.LongTensor | None = None,
+        label_weights: torch.Tensor | None = None,
+        return_logits: bool = False,
+        loss_chunk_size: int = 64,
+        flow_chunk_size: int = 32,
+        checkpoint_backbone: bool = False,
+    ) -> dict[str, torch.Tensor | int | None]:
+        """Teacher-forced understanding and continuous-latent training forward.
+
+        Generation training currently accepts one serialized conversation per
+        replica. ``generation_target_start_patches[i]`` is the first supervised
+        6.25 Hz patch in generation audio segment ``i``; ``-1`` makes the whole
+        segment conditioning-only. The frozen RedAE still produces native 25 Hz
+        targets, while Patch Encoder outputs are inserted into the LLM sequence.
+        """
+        if flow_chunk_size <= 0:
+            raise ValueError("flow_chunk_size must be positive")
+        input_embeds = self.backbone_llm.model.get_input_embeddings()(input_ids)
+
+        if audio_features is not None and audio_features.numel() > 0:
+            understanding_output = self.get_audio_features(
+                input_features=audio_features,
+                feature_attention_mask=audio_feature_attention_mask,
+            )
+            understanding_mask = input_ids == self.config.audio_special_token_id
+            if understanding_output.shape[0] != int(understanding_mask.sum().item()):
+                raise ValueError("understanding features do not match <|AUDIO|> positions")
+            input_embeds = input_embeds.masked_scatter(
+                understanding_mask.unsqueeze(-1).expand_as(input_embeds),
+                understanding_output.to(input_embeds.dtype),
+            )
+
+        vae_latents = None
+        generation_positions: list[torch.Tensor] = []
+        if vae_audios is not None and vae_audios.numel() > 0:
+            if input_ids.shape[0] != 1:
+                raise NotImplementedError(
+                    "generation training currently supports one conversation per replica"
+                )
+            if patch_encoder_output_attention_mask is None:
+                raise ValueError("generation audio requires patch attention masks")
+            with torch.no_grad():
+                vae_latents = self.red_vae.encode(vae_audios).transpose(1, 2)
+            patch_embeddings = self.patch_encoder(vae_latents)
+            ragged_patch_embeddings = patch_embeddings[
+                patch_encoder_output_attention_mask.bool()
+            ]
+            generation_mask = input_ids == self.config.audio_special_no_latent_id
+            flat_positions = generation_mask[0].nonzero(as_tuple=True)[0]
+            if ragged_patch_embeddings.shape[0] != flat_positions.numel():
+                raise ValueError("generation patches do not match <|AUDIO_NO_LATENT|> positions")
+            input_embeds = input_embeds.masked_scatter(
+                generation_mask.unsqueeze(-1).expand_as(input_embeds),
+                ragged_patch_embeddings.to(input_embeds.dtype),
+            )
+            cursor = 0
+            for valid in patch_encoder_output_attention_mask.sum(dim=1).tolist():
+                generation_positions.append(flat_positions[cursor : cursor + int(valid)])
+                cursor += int(valid)
+
+        def run_backbone(embeds):
+            return self.backbone_llm.model(
+                inputs_embeds=embeds, attention_mask=attention_mask,
+                use_cache=False, return_dict=True,
+            ).last_hidden_state
+
+        # This also checkpoints a frozen backbone in eval mode, so gradients can
+        # reach an upstream trainable audio/patch adapter without enabling dropout.
+        if checkpoint_backbone and torch.is_grad_enabled():
+            hidden_states = checkpoint(run_backbone, input_embeds, use_reentrant=False)
+        else:
+            hidden_states = run_backbone(input_embeds)
+
+        text_loss = None
+        text_loss_sum = None
+        text_weight = hidden_states.new_zeros((), dtype=torch.float32)
+        logits = self.backbone_llm.lm_head(hidden_states) if return_logits else None
+        if labels is not None:
+            text_loss_sum, text_weight = weighted_text_loss(
+                hidden_states, self.backbone_llm.lm_head, labels,
+                label_weights, loss_chunk_size,
+            )
+            text_loss = text_loss_sum / text_weight.clamp_min(torch.finfo(torch.float32).tiny)
+
+        flow_loss = None
+        flow_loss_sum = None
+        flow_count = 0
+        if generation_target_start_patches is not None:
+            if vae_latents is None:
+                raise ValueError("flow targets require generation audio")
+            starts = generation_target_start_patches.tolist()
+            if len(starts) != len(generation_positions):
+                raise ValueError("one target start is required per generation audio segment")
+
+            all_conditions = []
+            all_histories = []
+            all_targets = []
+            history_frames = self.dit.history_length
+            history_steps = self.dit.history_patches
+            patch_size = self.dit.patch_size
+            hidden_size = hidden_states.shape[-1]
+            for audio_idx, (positions, raw_start) in enumerate(
+                zip(generation_positions, starts)
+            ):
+                start = int(raw_start)
+                num_patches = positions.numel()
+                if start == -1:
+                    continue
+                if start < -1 or start >= num_patches:
+                    raise ValueError(
+                        f"target start {start} is outside audio segment with {num_patches} patches"
+                    )
+                if bool((positions <= 0).any()):
+                    raise ValueError("every generation patch needs a preceding LLM position")
+                step_conditions = hidden_states[0, positions - 1]
+                valid_latents = vae_latents[audio_idx, : num_patches * patch_size]
+                for patch_idx in range(start, num_patches):
+                    cond_start = max(0, patch_idx - history_steps)
+                    cond = step_conditions[cond_start : patch_idx + 1]
+                    if cond.shape[0] < history_steps + 1:
+                        cond = F.pad(
+                            cond,
+                            (0, 0, history_steps + 1 - cond.shape[0], 0),
+                        )
+                    frame_start = patch_idx * patch_size
+                    history = valid_latents[max(0, frame_start - history_frames) : frame_start]
+                    if history.shape[0] < history_frames:
+                        history = F.pad(
+                            history,
+                            (0, 0, history_frames - history.shape[0], 0),
+                        )
+                    target = valid_latents[frame_start : frame_start + patch_size]
+                    if target.shape != (patch_size, self.dit.config.vae_channels):
+                        raise ValueError("incomplete RedAE target patch")
+                    if cond.shape != (history_steps + 1, hidden_size):
+                        raise ValueError("invalid LLM conditioning window")
+                    all_conditions.append(cond)
+                    all_histories.append(history)
+                    all_targets.append(target)
+
+            if all_targets:
+                conditions = torch.stack(all_conditions)
+                targets = torch.stack(all_targets)
+                histories = torch.stack(all_histories)
+                flow_count = len(all_targets)
+                flow_loss_sum = hidden_states.new_zeros((), dtype=torch.float32)
+                for start in range(0, flow_count, flow_chunk_size):
+                    args = (conditions[start:start + flow_chunk_size],
+                            targets[start:start + flow_chunk_size],
+                            histories[start:start + flow_chunk_size])
+                    if torch.is_grad_enabled():
+                        chunk_loss = checkpoint(self.dit.compute_loss, *args, use_reentrant=False)
+                    else:
+                        chunk_loss = self.dit.compute_loss(*args)
+                    flow_loss_sum = flow_loss_sum + chunk_loss * args[0].shape[0]
+                flow_loss = flow_loss_sum / flow_count
+
+        losses = [loss for loss in (text_loss, flow_loss) if loss is not None]
+        loss = torch.stack(losses).sum() if losses else None
+        return {
+            "loss": loss,
+            "text_loss": text_loss,
+            "flow_loss": flow_loss,
+            "text_loss_sum": text_loss_sum,
+            "text_weight": text_weight,
+            "flow_loss_sum": flow_loss_sum,
+            "flow_count": flow_count,
+            "logits": logits if return_logits else None,
+        }
 
     @torch.inference_mode()
     def generate(

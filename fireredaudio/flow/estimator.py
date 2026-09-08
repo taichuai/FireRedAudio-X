@@ -233,6 +233,64 @@ class RedDiT(PreTrainedModel):
         v = self.final_layer(x, t)
         return v
 
+    def compute_loss(
+        self,
+        backbone_output: torch.Tensor,
+        target_vae_latents: torch.Tensor,
+        history_vae_latents: torch.Tensor,
+        cfg_drop_rate: float | None = None,
+    ) -> torch.Tensor:
+        """Flow-matching loss for one 4-frame RedAE patch per batch item.
+
+        ``backbone_output`` contains the current and two preceding 6.25 Hz LLM
+        states. They are repeated four times to align with the 8 historical and
+        4 current 25 Hz RedAE frames, matching :meth:`generate`.
+        """
+        b = target_vae_latents.shape[0]
+        expected_target = (b, self.patch_size, self.config.vae_channels)
+        expected_history = (b, self.history_length, self.config.vae_channels)
+        expected_backbone = (b, self.history_patches + 1, self.config.backbone_hidden_size)
+        if tuple(target_vae_latents.shape) != expected_target:
+            raise ValueError(
+                f"target_vae_latents must have shape {expected_target}, "
+                f"got {tuple(target_vae_latents.shape)}"
+            )
+        if tuple(history_vae_latents.shape) != expected_history:
+            raise ValueError(
+                f"history_vae_latents must have shape {expected_history}, "
+                f"got {tuple(history_vae_latents.shape)}"
+            )
+        if tuple(backbone_output.shape) != expected_backbone:
+            raise ValueError(
+                f"backbone_output must have shape {expected_backbone}, "
+                f"got {tuple(backbone_output.shape)}"
+            )
+
+        drop_rate = (
+            float(getattr(self.config, "train_cfg_rate", 0.1))
+            if cfg_drop_rate is None
+            else float(cfg_drop_rate)
+        )
+        if not 0.0 <= drop_rate <= 1.0:
+            raise ValueError(f"cfg_drop_rate must be in [0, 1], got {drop_rate}")
+
+        dit_backbone_cond = backbone_output.repeat_interleave(self.patch_size, dim=1)
+        dit_cond = self.backbone_input_proj(dit_backbone_cond)
+        if drop_rate:
+            keep = torch.rand(b, device=backbone_output.device) >= drop_rate
+            dit_cond = dit_cond * keep[:, None, None]
+
+        noise = torch.randn_like(target_vae_latents)
+        t = torch.rand(b, device=target_vae_latents.device, dtype=target_vae_latents.dtype)
+        t_view = t[:, None, None]
+        current_xt = (1.0 - t_view) * noise + t_view * target_vae_latents
+        acoustic_xt = torch.cat([history_vae_latents, current_xt], dim=1)
+        model_input = torch.cat([acoustic_xt, dit_cond], dim=-1)
+
+        velocity = self._forward_estimator(model_input, t)[:, self.history_length:]
+        target_velocity = target_vae_latents - noise
+        return F.mse_loss(velocity.float(), target_velocity.float(), reduction="mean")
+
     def generate(
         self,
         backbone_output: torch.Tensor,

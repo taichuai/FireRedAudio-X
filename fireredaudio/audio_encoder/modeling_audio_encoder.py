@@ -39,6 +39,7 @@ class Adapter(nn.Module):
 # Adapted from Qwen2.5-Omni's audio encoder (transformers), Apache-2.0
 class FireRedAudioEncoder(Qwen2_5OmniPreTrainedModel):
     config: FireRedAudioEncoderConfig
+    main_input_name = "input_features"
 
     def __init__(self, config: FireRedAudioEncoderConfig):
         super().__init__(config)
