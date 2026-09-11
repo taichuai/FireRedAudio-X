@@ -6,7 +6,7 @@
 
 - **加速推理**：vLLM / SGLang 后端，支持 ASR、音频理解、thinking、多音频及 JSONL 批量请求。
 - **单设备 SFT**：ASR / 理解分支和连续 latent TTS，支持验证、断点恢复与完整模型导出。
-- **辅助工具**：批量语音生成、带副语言标签的联合转写、说话人音频切片和推理回归测试。
+- **辅助工具**：批量语音生成、带副语言标签的联合转写、[长音频转写与说话人切片](docs/FIREREDAUDIO_TIMELINE.md)和推理回归测试。
 
 训练用法与支持范围见 [训练说明](TRAINING_REPRODUCTION.md)。
 
@@ -49,6 +49,7 @@ uv pip install --python .venv-sglang/bin/python --torch-backend cu128 -r require
 | 批量语音生成 | [run_instruct_tts_demo.py](scripts/run_instruct_tts_demo.py) |
 | 带副语言标签的联合转写 | [run_paralanguage_joint_transcription.py](scripts/run_paralanguage_joint_transcription.py) |
 | FireRed speaker 文本提取、对齐与切片 | [fireredaudio_timeline.py](scripts/fireredaudio_timeline.py) |
+| 长音频整段识别、对齐与切片 | [run_fireredaudio_long_audio.py](scripts/run_fireredaudio_long_audio.py) |
 
 各脚本参数可通过 `--help` 查看。以下命令在仓库根目录执行，GPU 编号按实际设备调整。
 

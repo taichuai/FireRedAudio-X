@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+timeline = ["soundfile==0.13.1"]
 accel = [
     "flash-linear-attention==0.5.0",
     "liger-kernel==0.8.0",
